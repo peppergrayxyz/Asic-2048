@@ -6,6 +6,7 @@
 #include <string.h>
 #include <assert.h>
 #include <time.h>
+#include <inttypes.h>
 
 #include <termios.h>
 #include <unistd.h>
@@ -170,6 +171,35 @@ void spawn_manual()
 
 }
 
+static uint16_t rng_value = 0x8988;
+
+void spawn_tetrisrng()
+{
+  rng_value = ((((rng_value >> 9) & 1) ^ ((rng_value >> 1) & 1)) << 15) | (rng_value >> 1);
+}
+
+void printBits(size_t const size, void const * const ptr)
+{
+    unsigned char *b = (unsigned char*) ptr;
+    unsigned char byte;
+    int i, j;
+    
+    for (i = size-1; i >= 0; i--) {
+        for (j = 7; j >= 0; j--) {
+            byte = (b[i] >> j) & 1;
+            printf("%u", byte);
+        }
+    }
+}
+
+void debug_spawn_tetrisrng()
+{
+    for(int i = 0; i < 16; i++)
+    {
+        printBits(sizeof(uint16_t), &rng_value); printf(" %x\n", rng_value);
+        spawn_tetrisrng();
+    }
+}
 
 void spawn()
 {
@@ -660,7 +690,10 @@ int main()
 
     test_computeIndex();
     test_move();
-    
+    debug_spawn_tetrisrng();
+
+    GETCH();
+
     strcpy(field, "                ");
     strcpy(score, "      0");
     fieldIndex = 0; 

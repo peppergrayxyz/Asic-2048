@@ -42,7 +42,7 @@ module ShiftRegisterController
 );
   reg active;  
 
-  localparam STEP_SIZE    = $clog2(DATA_WIDTH);
+  localparam STEP_SIZE    = $clog2(DATA_WIDTH) + 1;
   localparam COUNTER_SIZE = STEP_SIZE + ADDRESS_WIDTH;
 
   wire [COUNTER_SIZE-1:0] numShifts = numSteps * DATA_WIDTH;

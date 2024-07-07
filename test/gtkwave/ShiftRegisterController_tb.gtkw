@@ -1,78 +1,44 @@
 [*]
 [*] GTKWave Analyzer v3.3.118 (w)1999-2023 BSI
-[*] Sun Jul  7 17:19:46 2024
+[*] Sun Jul  7 23:35:59 2024
 [*]
-[dumpfile] "/home/pepper/dev/Asic-2048/test/vcd/ShiftRegisterController_tb.vcd"
-[dumpfile_mtime] "Sun Jul  7 17:18:29 2024"
-[dumpfile_size] 75518
+[dumpfile] "/home/pepper/dev/Asic-2048/test/vcd/RNG_tb.vcd"
+[dumpfile_mtime] "Sun Jul  7 23:25:30 2024"
+[dumpfile_size] 22138
 [savefile] "/home/pepper/dev/Asic-2048/test/gtkwave/ShiftRegisterController_tb.gtkw"
-[timestart] 59190
+[timestart] 3409
 [size] 2560 1347
 [pos] -1 -1
-*-11.400001 505630 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1
-[treeopen] ShiftRegisterController_Test.
-[treeopen] ShiftRegisterController_Test.dut.
-[treeopen] ShiftRegisterController_Test.SRC[0].
-[treeopen] ShiftRegisterController_Test.SRC[1].
+*-4.243448 3500 3560 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1
+[treeopen] RNG_Test.
 [sst_width] 305
-[signals_width] 347
+[signals_width] 497
 [sst_expanded] 1
 [sst_vpaned_height] 412
+@28
+RNG_Test.clk
+RNG_Test.rst_n
+RNG_Test.ser_in
+RNG_Test.ser_out
 @200
--ShiftRegisterController
+-RNG
 @28
-ShiftRegisterController_Test.dut.clk
-ShiftRegisterController_Test.dut.rst_n
-@22
-ShiftRegisterController_Test.dut.numSteps[3:0]
+RNG_Test.dut.bit1
+RNG_Test.dut.bit2
+RNG_Test.dut.bitX
+@200
+-DC
 @28
-ShiftRegisterController_Test.dut.value[7:0]
-ShiftRegisterController_Test.dut.buffer[7:0]
-ShiftRegisterController_Test.dut.setValue[7:0]
-[color] 6
-ShiftRegisterController_Test.dut.write
-ShiftRegisterController_Test.dut.set_clk
-ShiftRegisterController_Test.dut.override
-ShiftRegisterController_Test.dut.start
+RNG_Test.DC.load
+RNG_Test.DC.enable
 @24
-[color] 3
-ShiftRegisterController_Test.dut.state[1:0]
+RNG_Test.DC.clk
 @200
--Down Counter
-@22
-ShiftRegisterController_Test.dut.DC.load_value[6:0]
+-SR
 @28
-ShiftRegisterController_Test.dut.DC.enable
-ShiftRegisterController_Test.dut.DC.load
-@24
-ShiftRegisterController_Test.dut.DC.value[6:0]
-ShiftRegisterController_Test.dut.DC.count[6:0]
-@28
-ShiftRegisterController_Test.dut.DC.last
-@200
--Shift Register
-@28
-ShiftRegisterController_Test.dut.SR.SRCLK
-ShiftRegisterController_Test.dut.SR.SER
-ShiftRegisterController_Test.dut.SR.SRCLR_n
-ShiftRegisterController_Test.dut.SR.SRCLR_value[7:0]
-ShiftRegisterController_Test.dut.SR.SR[7:0]
-ShiftRegisterController_Test.dut.SR.Q[7:0]
-ShiftRegisterController_Test.dut.SR.Q_dash
-@200
--SRC[0]
-@28
-ShiftRegisterController_Test.SRC[0].SR.SRCLK
-ShiftRegisterController_Test.SRC[0].SR.SER
-ShiftRegisterController_Test.SRC[0].SR.SR[7:0]
-ShiftRegisterController_Test.SRC[0].SR.Q[7:0]
-ShiftRegisterController_Test.SRC[0].SR.Q_dash
-@200
--SRC[1]
-@28
-ShiftRegisterController_Test.SRC[1].SR.SER
-ShiftRegisterController_Test.SRC[1].SR.SR[7:0]
-ShiftRegisterController_Test.SRC[1].SR.Q[7:0]
-ShiftRegisterController_Test.SRC[1].SR.Q_dash
+RNG_Test.SR.SER
+RNG_Test.SR.SRCLK
+RNG_Test.SR.SRCLR_n
+RNG_Test.SR.Q_dash
 [pattern_trace] 1
 [pattern_trace] 0

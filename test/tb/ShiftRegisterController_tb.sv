@@ -33,7 +33,7 @@ module ShiftRegisterController_Test;
 
   generate
     for (genvar i=0; i < NUM_SR; i = i + 1) begin: SRC
-        ShiftRegister #(.WIDTH(DATA_WIDTH)) SR (
+        ShiftRegisterLatched #(.WIDTH(DATA_WIDTH)) SR (
             .SRCLK(ser_clk),
             .SER(serialBus[i]),
             .RCLK(!ser_clk),
