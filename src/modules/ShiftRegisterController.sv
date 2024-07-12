@@ -38,7 +38,8 @@ module ShiftRegisterController
   output [DATA_WIDTH-1:0] buffer,
   output ser_out,
   output ser_clk,
-  output lastStep
+  output lastStep,
+  output index,
 );
   reg active;  
 
@@ -56,6 +57,7 @@ module ShiftRegisterController
     .load(!active || (lastStep && start)),
     .load_value(numShifts),
     .last(lastStep)
+    .count(index)
   );
 
   wire override = (active && write && ser_clk);
