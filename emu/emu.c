@@ -11,6 +11,13 @@
 #include <termios.h>
 #include <unistd.h>
 
+#define DEBUG 1
+#define DEBUG_MOVE 0
+#define DEBUG_MOVE_REF 0
+#define DEBUG_MOVE_TEST_REF 0
+
+bool debug = false;
+
 int getch(void)
 {
     struct termios oldattr, newattr;
@@ -196,6 +203,8 @@ void printBits(size_t const size, void const * const ptr)
 
 void debug_spawn_tetrisrng()
 {
+    printf("\n=== debug_spawn_tetrisrng ===\n");
+
     for(int i = 0; i < 16; i++)
     {
         printBits(sizeof(uint16_t), &rng_value); printf(" %x\n", rng_value);
@@ -261,7 +270,7 @@ int computeIndex(int lane, int pos, int dir)
 
 void print_lane(int lane, int dir)
 {
-    printf("║ %c | %c | %c | %c║", 
+    printf("║ %c | %c | %c | %c ║", 
     field[computeIndex(lane, 0, dir)], 
     field[computeIndex(lane, 1, dir)], 
     field[computeIndex(lane, 2, dir)], 
@@ -312,15 +321,10 @@ void addScore(int value)
     int newScore = currentScore + currentValue;
 
     // printf("score: %d %d %7d\n", currentScore, currentValue, newScore);
-    sprintf(score, "%7d", newScore);
+    snprintf(score, NUM_SCORE+1, "%7d", newScore);
 }
 
 /*
-Iterations: 7330
-Steps: 520
-
-Iterations: 5218
-Steps: 640
 
     == Evaluation ==   
 
@@ -425,7 +429,7 @@ Steps: 640
 
 
 */
-bool move(move_direction_t dir)
+bool move1(move_direction_t dir)
 {
     bool hasMoved = false;
     
@@ -438,8 +442,8 @@ bool move(move_direction_t dir)
     bool start = true;
     bool done = false;
 
-    // printf("dir: %s\n", moves[dir]);
-    // print_game();
+    if(DEBUG_MOVE || debug) printf("dir: %s\n", moves[dir]);
+    if(DEBUG_MOVE || debug) print_game();
 
     do
     {       
@@ -469,7 +473,7 @@ bool move(move_direction_t dir)
         int posBaseWrite = !canMerge && hasGap ? posBaseNext : posBase;
 
         int nextLane     = incLane ? laneNext : lane;
-        int nextPosBase  = incLane ? 0 : (hasTwoTiles ? (canMerge && hasGap ? posBaseNext : posView) : posBase);
+        int nextPosBase  = incLane ? 0 : (hasTwoTiles ? posBaseNext : posBase);
         int nextPosView  = incLane ? 1 : posViewNext;
         
         // Process
@@ -483,10 +487,19 @@ bool move(move_direction_t dir)
         int indexReadB = computeIndex(laneBaseRead, posBaseRead, dir);
         int indexReadD = computeIndex(nextLane, nextPosView, dir);;
 
-        // printf("[%d:%d-%d] %x '%c' '%c' ", lane, posBase, posView, fieldIndex, buff, data);
-        // printf("(%d%d%d%d%d%d%d) ", start, isViewZero, isBaseZero, canMerge, hasGap, hasTwoTiles,moveTile);
-        // print_lane(lane, dir);
-        // printf(" ---> ");
+        if(DEBUG_MOVE || debug) printf("[%d:%d-%d] %x '%c' '%c' ", lane, posBase, posView, fieldIndex, buff, data);
+        if(DEBUG_MOVE || debug) printf("(%d%d%d%d%d%d%d) ", start, isViewZero, isBaseZero, canMerge, hasGap, hasTwoTiles,moveTile);
+        if(DEBUG_MOVE || debug) print_lane(lane, dir);
+
+        unsigned char hex[] = "0123456789abcdef";
+
+        if(DEBUG_MOVE || debug) printf(" C %c W %c R %c %c]", 
+            moveTile                    ? hex[posView]      : ' ',
+            moveTile                    ? hex[posBaseWrite] : ' ',
+            !done && (start || incLane) ? hex[posBaseRead]  : ' ',
+            !done                       ? hex[nextPosView]  : ' ');
+
+        if(DEBUG_MOVE || debug) printf(" ---> ");
 
         if(hasTwoTiles || moveTile)
         {
@@ -501,12 +514,15 @@ bool move(move_direction_t dir)
             }
         }        
 
-        if(start || incLane) buff = accessMemory(indexReadB, false, 0);
-        if(!done)            data = accessMemory(indexReadD, false, 0);
+        if(!done)
+        {
+            if(start || incLane) buff = accessMemory(indexReadB, false, 0);
+            data = accessMemory(indexReadD, false, 0);
+        }
 
-        // printf("%x '%c' '%c' [%d:%d-%d] ", fieldIndex, buff, data, nextLane, nextPosBase, nextPosView);
-        // print_lane(lane, dir);
-        // printf("\n");
+        if(DEBUG_MOVE || debug) printf("%x '%c' '%c' [%d:%d-%d] ", fieldIndex, buff, data, nextLane, nextPosBase, nextPosView);
+        if(DEBUG_MOVE || debug) print_lane(lane, dir);
+        if(DEBUG_MOVE || debug) printf("\n");
 
         start    = false;
         lane     = nextLane;
@@ -517,106 +533,14 @@ bool move(move_direction_t dir)
 
     } while(!done);
 
-    // print_game();
+    if(DEBUG_MOVE || debug) print_game();
 
     if(hasMoved) lastMove = dir;
     
     return hasMoved;
 }
-
 
 bool move2(move_direction_t dir)
-{
-    bool hasMoved = false;
-    int accu = 'x', data = 'y';
-
-    int lane = 0;
-    int posAccu = 0;
-    int posData = 0;
-    bool done = false;
-printf("===\n");
-    do
-    {       
-        numSteps += 1;
-        bool updateScore = false;
-
-        bool start       = (posAccu == 0) && (posData == 0);
-        bool isAccuZero  = (accu == signs[0]);
-        bool isDataZero  = (data == signs[0]);    
-        bool eqAccuData  = (accu == data);        
-        bool hasTwoTiles = !start && !isAccuZero && !isDataZero;
-        bool canMerge    = hasTwoTiles && eqAccuData;
-        bool hasGap      = hasTwoTiles && (posData - posAccu > 1);
-        bool moveTile    = !start && !isDataZero && (isAccuZero || canMerge || hasGap);
-
-        bool incData     = canMerge;
-        bool clear       = !start && !isDataZero && canMerge;
-        bool load        = start || (!start && !isDataZero && !canMerge);
-
-        int posAccuNext  = posAccu + 1;
-        int posDataNext  = posData + 1;
-        int laneNext     = lane + 1;
-        int incLane      = (posDataNext >= NUM_BOARD);
-        done             = incLane && (laneNext >= NUM_BOARD);
-
-        int nextLane     = incLane ? laneNext : lane;
-        int nextPosAccu  = incLane ? 0 : (!hasTwoTiles ? posAccu : (canMerge ? posData : posAccuNext));
-        int nextPosData  = incLane ? 1 : posDataNext;
-        
-        int nextValue = getSignValue(data) + 1;  
-
-        // printf("[%d:%d-%d] '%c' '%c' S:%d +:%d >:%d (%2d) D:%d --> %d:-%d-%d -- ", lane, posAccu, posData, accu, data, start, canMerge, moveTile, nextValue, done, nextLane, nextPosAccu, nextPosData);
-  
-        if(canMerge) addScore(nextValue); 
-
-        // Memory
-        int index1   = computeIndex(lane, posAccu, dir);
-        int index1p1 = computeIndex(lane, posAccu+1, dir);
-        int index2   = computeIndex(lane, posData, dir);
-        int index1n  = computeIndex(nextLane, nextPosAccu, dir);
-        int index2n  = computeIndex(nextLane, nextPosData, dir);
-
-        int writeIndex = (!canMerge && hasGap) ? index1p1 : index1;
-        
-        // printf("%x-%x %x-%x %x\n", index1, index2, index1n, index2n, writeIndex);
-
-        if(load) accu = incData ? signs[nextValue] : data;
-        if(clear) accu = signs[0];
-
-        int a = accu, d = data;
-
-        if(moveTile) accessMemory(index2, true, signs[0]);
-        if(moveTile) accessMemory(writeIndex, true, incData ? signs[nextValue] : data); //);
-        if(start)    accu = accessMemory(index1n, false, 0);
-        if(!done)    data = accessMemory(index2n, false, 0);
-
-        printf("'%c' '%c' '%c' '%c'\n", a, d, accu, data);
-
-        //printf("%d %d %d %d\n", index2, writeIndex, index1n, index2n);
-        
-        // if(load)  accu = data;
-        //if(clear) accu = signs[0];
-        // if(start) accu = data;
-
-        lane     = nextLane;
-        posAccu  = nextPosAccu;
-        posData  = nextPosData;
-        
-        hasMoved = hasMoved || moveTile;  
-
-
-    } while(!done);
-
-    if(hasMoved) lastMove = dir;
-    
-    return hasMoved;
-}
-
-/*
-Iterations: 5218
-Steps: 640
-*/
-bool move3(move_direction_t dir)
 {
     bool hasMoved = false;
     int accu = 0, data = 0;
@@ -742,6 +666,254 @@ bool move3(move_direction_t dir)
     return hasMoved;
 }
 
+bool move_ref(int dir)
+{
+
+    if(DEBUG_MOVE_REF || debug) printf("dir: %s\n", moves[dir]);
+    if(DEBUG_MOVE_REF || debug) print_game();
+
+    bool moved = false;
+
+    int coordinates[4][4];
+
+    if(dir == MV_LEFT)
+    {
+        coordinates[0][0] = 3;
+        coordinates[0][1] = 2;
+        coordinates[0][2] = 1;
+        coordinates[0][3] = 0;
+        coordinates[1][0] = 7;
+        coordinates[1][1] = 6;
+        coordinates[1][2] = 5;
+        coordinates[1][3] = 4;
+        coordinates[2][0] = 0xb;
+        coordinates[2][1] = 0xa;
+        coordinates[2][2] = 9;
+        coordinates[2][3] = 8;
+        coordinates[3][0] = 0xf;
+        coordinates[3][1] = 0xe;
+        coordinates[3][2] = 0xd;
+        coordinates[3][3] = 0xc;
+    }
+
+    if(dir == MV_RIGHT)
+    {
+        coordinates[0][0] = 0;
+        coordinates[0][1] = 1;
+        coordinates[0][2] = 2;
+        coordinates[0][3] = 3;
+        coordinates[1][0] = 4;
+        coordinates[1][1] = 5;
+        coordinates[1][2] = 6;
+        coordinates[1][3] = 7;
+        coordinates[2][0] = 8;
+        coordinates[2][1] = 9;
+        coordinates[2][2] = 0xa;
+        coordinates[2][3] = 0xb;
+        coordinates[3][0] = 0xc;
+        coordinates[3][1] = 0xd;
+        coordinates[3][2] = 0xe;
+        coordinates[3][3] = 0xf;
+    }
+
+    if(dir == MV_UP)
+    {
+        coordinates[0][0] = 0xc;
+        coordinates[0][1] = 8;
+        coordinates[0][2] = 4;
+        coordinates[0][3] = 0;
+        coordinates[1][0] = 0xd;
+        coordinates[1][1] = 9;
+        coordinates[1][2] = 5;
+        coordinates[1][3] = 1;
+        coordinates[2][0] = 0xe;
+        coordinates[2][1] = 0xa;
+        coordinates[2][2] = 6;
+        coordinates[2][3] = 2;
+        coordinates[3][0] = 0xf;
+        coordinates[3][1] = 0xb;
+        coordinates[3][2] = 7;
+        coordinates[3][3] = 3;
+    }
+
+    if(dir == MV_DOWN)
+    {
+        coordinates[0][0] = 0;
+        coordinates[0][1] = 4;
+        coordinates[0][2] = 8;
+        coordinates[0][3] = 0xc;
+        coordinates[1][0] = 1;
+        coordinates[1][1] = 5;
+        coordinates[1][2] = 9;
+        coordinates[1][3] = 0xd;
+        coordinates[2][0] = 2;
+        coordinates[2][1] = 6;
+        coordinates[2][2] = 0xa;
+        coordinates[2][3] = 0xe;
+        coordinates[3][0] = 3;
+        coordinates[3][1] = 7;
+        coordinates[3][2] = 0xb;
+        coordinates[3][3] = 0xf;
+    }
+
+    int convert[128] = {0};
+        convert[' '] = 0;
+        convert['1'] = 1;
+        convert['2'] = 2;
+        convert['3'] = 3;
+        convert['4'] = 4;
+        convert['5'] = 5;
+        convert['6'] = 6;
+        convert['7'] = 7;
+        convert['8'] = 8;
+        convert['9'] = 9;
+        convert['a'] = 10;
+        convert['b'] = 11;
+        convert['c'] = 12;
+        convert['d'] = 13;
+        convert['e'] = 14;
+        convert['f'] = 15;
+        convert['g'] = 16;
+        convert['h'] = 17;
+
+    for(int lane = 0; lane < 4; lane++)
+    {
+        int indexPos1 = coordinates[lane][0];
+        int indexPos2 = coordinates[lane][1];
+        int indexPos3 = coordinates[lane][2];
+        int indexPos4 = coordinates[lane][3];
+
+        int data[13] = {
+            0,
+            convert[field[indexPos1]],
+            convert[field[indexPos2]],
+            convert[field[indexPos3]],
+            convert[field[indexPos4]]
+        };
+
+        data[0xa] = data[1] + 1;
+        data[0xb] = data[2] + 1;
+        data[0xc] = data[3] + 1;
+
+        int value1 =                                                                                                     (data[1] == 0) ? 0 : 1;
+        int value2 =                                                                    (data[2] == data[1]) ? value1 : ((data[2] == 0) ? 0 : 2);
+        int value3 =                                  (data[3] == data[2])  ? value2 : ((data[3] == data[1]) ? value1 : ((data[3] == 0) ? 0 : 3));
+        int value4 = (data[4] == data[3]) ? value3 : ((data[4] == data[2])  ? value2 : ((data[4] == data[1]) ? value1 : ((data[4] == 0) ? 0 : 4)));
+
+        int value = (value4 << 12) | (value3 << 8) | (value2 << 4) | (value1 << 0);
+        int start = value; 
+
+        if(DEBUG_MOVE_REF || debug) printf("%04x (%2d %2d %2d %2d) ", value, data[1], data[2], data[3], data[4]);
+        if(DEBUG_MOVE_REF || debug) print_lane(lane, dir);
+        if(DEBUG_MOVE_REF || debug) printf(" --> ");
+
+        switch (value)
+        {
+            case 0x0000: 
+            case 0x0001: 
+            case 0x0021:
+            case 0x0121:  
+            case 0x0321:  
+            case 0x1321:   
+            case 0x2121:   
+            case 0x2321: 
+            case 0x4121:
+            case 0x4321:break;
+
+            case 0x0020: value = 0x0002; break;
+            case 0x0300: value = 0x0003; break;
+            case 0x4000: value = 0x0004; break;
+            case 0x1001: 
+            case 0x0101:
+            case 0x0011: value = 0x000a; break;
+            case 0x0220: 
+            case 0x2020: value = 0x000b; break;
+            case 0x3300: value = 0x000c; break;
+            case 0x1101:
+            case 0x1011: value = 0x001a; break;
+            case 0x0111: value = 0x001a; break;
+            case 0x2220: value = 0x002b; break;
+            case 0x0301: value = 0x0031; break;
+            case 0x0320: value = 0x0032; break;
+            case 0x0311: value = 0x003a; break;
+            case 0x4001: value = 0x0041; break;
+            case 0x4020: value = 0x0042; break;
+            case 0x4300: value = 0x0043; break;
+            case 0x4101: 
+            case 0x4011: value = 0x004a; break;
+            case 0x4220: value = 0x004b; break;
+            case 0x1111: value = 0x00aa; break;
+            case 0x2021: value = 0x00b1; break;
+            case 0x0221: value = 0x00b1; break;
+            case 0x3301: value = 0x00c1; break;
+            case 0x3320: value = 0x00c2; break;
+            case 0x3311: value = 0x00ca; break;
+            case 0x1021: value = 0x0121; break;
+            case 0x1301: value = 0x0131; break;
+            case 0x1311: value = 0x013a; break;
+            case 0x1221: value = 0x01b1; break;
+            case 0x2320: value = 0x0232; break;
+            case 0x2221: value = 0x02b1; break;
+            case 0x4111: value = 0x041a; break;
+            case 0x4021: value = 0x0421; break;
+            case 0x4301: value = 0x0431; break;
+            case 0x4320: value = 0x0432; break;
+            case 0x4311: value = 0x043a; break;
+            case 0x4221: value = 0x04b1; break;
+            case 0x1121: value = 0x0a21; break;
+            case 0x3321: value = 0x0c21; break;
+
+            default: printf("<%04x>\n", value); fflush(stdout); assert(0);
+        }
+
+        moved = moved || (start != value);
+
+        value1 = ((0xf <<  0) & value) >>  0;
+        value2 = ((0xf <<  4) & value) >>  4;
+        value3 = ((0xf <<  8) & value) >>  8;
+        value4 = ((0xf << 12) & value) >> 12;
+        
+        if(DEBUG_MOVE_REF || debug) printf("%04x (%2d %2d %2d %2d):(%2x %2x %2x %2x) ", value, data[value1], data[value2], data[value3], data[value4], 
+                                                                                    signs[data[value1]], signs[data[value2]], signs[data[value3]], signs[data[value4]]);
+        if(DEBUG_MOVE_REF || debug) print_lane(lane, dir);
+        if(DEBUG_MOVE_REF || debug) printf("\n");
+
+
+        assert(signs[data[value1]] > 0);
+        assert(signs[data[value2]] > 0);
+        assert(signs[data[value3]] > 0);
+        assert(signs[data[value4]] > 0);
+
+        field[indexPos1] = signs[data[value1]];
+        field[indexPos2] = signs[data[value2]];
+        field[indexPos3] = signs[data[value3]];
+        field[indexPos4] = signs[data[value4]];
+
+    }
+
+
+
+    if(DEBUG_MOVE_REF || debug) print_game();
+
+    return moved;
+}
+
+bool move(int dir)
+{
+    /*
+        Iterations: 5478
+        Steps: 520
+    */
+    move1(dir);
+
+    /*
+        Iterations: 5218
+        Steps: 640
+    */
+    //move2(dir);
+
+    // move_ref(dir);
+}
 
 bool canmove()
 {
@@ -751,6 +923,8 @@ bool canmove()
 
 void debug_computeIndex()
 {
+    printf("\n=== debug_computeIndex ===\n");
+
     for(int dir = 1; dir <= 4; dir++)
     {
         printf("direction: %s (%d)\n\n", moves[dir], dir);
@@ -771,6 +945,7 @@ void debug_computeIndex()
 
 void test_computeIndex()
 {
+    printf("[test_computeIndex]\n");
 
     // direction: ↑ (1)
 
@@ -863,10 +1038,12 @@ void test_computeIndex()
     assert(computeIndex(3, 2, MV_RIGHT) == 14);
     assert(computeIndex(3, 3, MV_RIGHT) == 15);
     
+    printf("ok.\n");
 }
 
 void test_computeIndex2()
 {
+    printf("[test_computeIndex2]\n");
 
     strcpy(field, "123456789abcdefg");
 
@@ -950,10 +1127,13 @@ void test_computeIndex2()
     assert(field[computeIndex(3, 1, MV_DOWN)] == '8');
     assert(field[computeIndex(3, 2, MV_DOWN)] == 'c');
     assert(field[computeIndex(3, 3, MV_DOWN)] == 'g');
+
+    printf("ok.\n");
 }
 
 void debug_move()
 {
+    printf("\n=== debug_move ===\n");
 
     struct test_fields_t
     {
@@ -1021,6 +1201,19 @@ void debug_move()
         {"1   1   1   1   ", MV_UP,    "        2   2   ", true},
         {"1   1   1   1   ", MV_DOWN,  "2   2           ", true},
 
+        // shift
+        {"121             ", MV_LEFT,  " 121            ", true},
+        {" 121            ", MV_RIGHT, "121             ", true},
+        {"1   2   1       ", MV_UP,    "    1   2   1   ", true},
+        {"    1   2   1   ", MV_DOWN,  "1   2   1       ", true},
+
+        //shift and merge
+        {"111             ", MV_LEFT,  "  12            ", true},
+        {"111             ", MV_RIGHT, "21              ", true},
+        {"1   1   1       ", MV_UP,    "        1   2   ", true},
+        {"    1   1   1   ", MV_DOWN,  "2   1           ", true},
+
+
     };
 
     char moveNames[5][9] = 
@@ -1039,16 +1232,16 @@ void debug_move()
     for(int i = 0; i < numTests; i++)
     {
        
-        // printf("=== %d ===\n", i);
+        printf("=== %d ===\n", i);
         strcpy(field, test_fields[i].test);
-        // printf("\n"); print_game();
+        printf("\n"); print_game();
         fieldIndex = 0;
         numIterations = 0;
         numSteps = 0;
         bool moved = move(test_fields[i].dir);
         interationsTotal += numIterations;
         stepsTotal += numSteps;
-        // printf("\n"); print_game();
+        printf("\n"); print_game();
         printf("'%s' %s '%s' (%s): '%s' (%s) [%3d][%2d]\n", test_fields[i].test, moves[test_fields[i].dir], test_fields[i].result, test_fields[i].moved ? "true " : "false", field, moved ? "true " : "false", numIterations, numSteps);
         
         assert(test_fields[i].moved == moved);
@@ -1063,6 +1256,8 @@ void debug_move()
 
 void test_move()
 {
+    printf("[test_move]\n");
+
     strcpy(field, "                "); assert(move(MV_DOWN ) == false); assert(strcmp(field, "                ") == 0);
     strcpy(field, "                "); assert(move(MV_UP   ) == false); assert(strcmp(field, "                ") == 0);
     strcpy(field, "                "); assert(move(MV_RIGHT) == false); assert(strcmp(field, "                ") == 0);
@@ -1104,6 +1299,60 @@ void test_move()
     strcpy(field, "1111            "); assert(move(MV_RIGHT) == true ); assert(strcmp(field, "22              ") == 0);
     strcpy(field, "1111            "); assert(move(MV_LEFT ) == true ); assert(strcmp(field, "  22            ") == 0);
 
+    printf("ok.\n");
+}
+
+void test_move_ref()
+{
+    unsigned char test[NUM_FIELD + 1] = "                ";;
+    unsigned char result[NUM_FIELD + 1] = "                ";;
+    
+    printf("[test_move_ref]\n");
+
+    debug = false;
+
+    for(uint64_t i = 0; i < UINT32_MAX; i++)
+    {
+        for(int j = 0; j < NUM_FIELD; j++)
+        {
+            test[j] = signs[(i >> 2*j) % 4];
+        }
+
+        for(int dir = 1; dir <= 4; dir++)
+        {
+            double completion = ((((double) (i))*100))/((double) UINT32_MAX);
+
+            if(i%1000000 == 0) { fprintf(stderr, "\r(%f%)", completion); fflush(stderr); }
+            if(DEBUG_MOVE_TEST_REF || debug) printf(" ------\n");
+
+            memcpy(field, test, NUM_FIELD);
+            if(DEBUG_MOVE_TEST_REF || debug) printf("dir: %s, '%s'\n", moves[dir], field);
+            if(DEBUG_MOVE_TEST_REF || debug) print_game();
+
+            int moved1 = move_ref(dir);
+            memcpy(result, field, NUM_FIELD);
+            if(DEBUG_MOVE_TEST_REF || debug) printf("mov Ref : %d, '%s'\n", moved1, field);
+            if(DEBUG_MOVE_TEST_REF || debug) print_game();
+
+            memcpy(field, test, NUM_FIELD);
+            int moved2 = move(dir);
+            if(DEBUG_MOVE_TEST_REF || debug) printf("mov Test: %d, '%s'\n", moved2, field);
+            if(DEBUG_MOVE_TEST_REF || debug) print_game();
+
+            bool testMoved = (moved1 == moved2);
+            bool testField = strcmp(result, field) == 0;
+
+            if(!debug && (!testMoved || !testField))
+            {
+                dir = dir - 1;
+                debug = true;
+                continue;
+            }
+    
+            assert(testMoved && testField);        
+        }
+    }
+    printf("ok.\n");
 }
 
 int main()
@@ -1112,16 +1361,19 @@ int main()
     bool moved = true;
     size_t numMoves = 0;
 
-    // debug_move();
-    // debug_spawn_tetrisrng();
+    if(DEBUG) debug_move();
+    if(DEBUG) debug_spawn_tetrisrng();
+    if(DEBUG) debug_computeIndex();
+
     test_computeIndex();
     test_computeIndex2();
-    test_move();
-    // return 0;
-    GETCH();
+    test_move();    
+    test_move_ref();    
+    
+    if(DEBUG) return 0;
 
-    strcpy(field, "                ");
-    strcpy(score, "      0");
+    strncpy(field, "                ", NUM_FIELD + 1);
+    strncpy(score, "      0", NUM_SCORE + 1);
     fieldIndex = 0; 
     numIterations = 0;
     lastMove = 0;
