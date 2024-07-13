@@ -11,14 +11,24 @@
 #include <termios.h>
 #include <unistd.h>
 
-#define DEBUG 1
+#define DEBUG 0
 #define DEBUG_MOVE 0
 #define DEBUG_MOVE_REF 0
 #define DEBUG_MOVE_TEST 0
+#define DEBUG_SEARCH 0
 
 #define MOVE_ALGO 2
+#define SEARCH 0
+#define NUM_SEARCH UINT32_MAX
+
+#define NUM_DIRS  4
+#define NUM_BOARD 4
+#define NUM_FIELD (NUM_BOARD * NUM_BOARD)
+#define NUM_SCORE 7
+#define NUM_SIGNS 18
 
 bool debug = false;
+static int moveRefLastValues[NUM_FIELD] = {0};
 
 int getch(void)
 {
@@ -42,20 +52,25 @@ typedef enum move_direction_en {
     MV_RIGHT = 4,
 } move_direction_t;
 
-#define NUM_BOARD 4
-#define NUM_FIELD (NUM_BOARD * NUM_BOARD)
-#define NUM_SCORE 7
-#define NUM_SIGNS 18
+char moveNames[5][9] = 
+{
+    "",
+    "MV_UP   ", 
+    "MV_DOWN ", 
+    "MV_LEFT ", 
+    "MV_RIGHT"
+};
+
 
 static move_direction_t lastMove = 0;
 static int lastSpawn = 0;
-static char moves[][4] = { " ", "↑", "↓", "←", "→" };
+static char moveLabels[][4] = { " ", "↑", "↓", "←", "→" };
 static char field[NUM_FIELD + 1] = "                ";
 static int fieldIndex = 0;
 static int numIterations = 0;
 static int numSteps = 0;
 static char score[NUM_SCORE + 1] = "      0";
-static char signs[NUM_SIGNS] = {' ', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'};
+static char signs[] = {' ', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'x'};
 
 void print_game()
 {
@@ -204,11 +219,12 @@ void printBits(size_t const size, void const * const ptr)
 
 void debug_spawn_tetrisrng()
 {
-    printf("\n=== debug_spawn_tetrisrng ===\n");
+    printf("\n=== debug_spawn_tetrisrng ===\n\n");
 
     for(int i = 0; i < 16; i++)
     {
-        printBits(sizeof(uint16_t), &rng_value); printf(" %x\n", rng_value);
+        printf(" ");
+        printBits(sizeof(uint16_t), &rng_value); printf(" %04x\n", rng_value);
         spawn_tetrisrng();
     }
 }
@@ -448,7 +464,7 @@ bool move2(move_direction_t dir)
     bool start = true;
     bool done = false;
 
-    if(DEBUG_MOVE && debug) printf("dir: %s\n", moves[dir]);
+    if(DEBUG_MOVE && debug) printf("dir: %s\n", moveLabels[dir]);
     if(DEBUG_MOVE && debug) print_game();
 
     do
@@ -521,7 +537,7 @@ bool move2(move_direction_t dir)
         if(!done)
         {
             if(start || incLane) buff = accessMemory(indexReadB, false, 0);
-            data = accessMemory(indexReadD, false, 0);
+            data = accessMemory(indexReadD, false, 0);            
         }
 
         if(DEBUG_MOVE && debug) printf("%x '%c' '%c' [%d:%d-%d] ", fieldIndex, buff, data, nextLane, nextPosBase, nextPosView);
@@ -671,7 +687,7 @@ bool move1(move_direction_t dir)
 bool move_ref(int dir)
 {
 
-    if(DEBUG_MOVE_REF && debug) printf("dir: %s\n", moves[dir]);
+    if(DEBUG_MOVE_REF && debug) printf("dir: %s\n", moveLabels[dir]);
     if(DEBUG_MOVE_REF && debug) print_game();
 
     bool moved = false;
@@ -778,6 +794,9 @@ bool move_ref(int dir)
         convert['g'] = 16;
         convert['h'] = 17;
 
+        // only for random searching
+        convert['x'] = 18;
+
     for(int lane = 0; lane < 4; lane++)
     {
         int indexPos1 = coordinates[lane][0];
@@ -802,10 +821,10 @@ bool move_ref(int dir)
         data[0xb] = data[2] + 1;
         data[0xc] = data[3] + 1;
 
-        int value1 =                                                                                                     (data[1] == 0) ? 0 : 1;
-        int value2 =                                                                    (data[2] == data[1]) ? value1 : ((data[2] == 0) ? 0 : 2);
-        int value3 =                                  (data[3] == data[2])  ? value2 : ((data[3] == data[1]) ? value1 : ((data[3] == 0) ? 0 : 3));
-        int value4 = (data[4] == data[3]) ? value3 : ((data[4] == data[2])  ? value2 : ((data[4] == data[1]) ? value1 : ((data[4] == 0) ? 0 : 4)));
+        int value1 = moveRefLastValues[indexPos1] =                                                                                                    (data[1] == 0) ? 0 : 1;
+        int value2 = moveRefLastValues[indexPos2] =                                                                   (data[2] == data[1]) ? value1 : ((data[2] == 0) ? 0 : 2);
+        int value3 = moveRefLastValues[indexPos3] =                                 (data[3] == data[2])  ? value2 : ((data[3] == data[1]) ? value1 : ((data[3] == 0) ? 0 : 3));
+        int value4 = moveRefLastValues[indexPos4] =(data[4] == data[3]) ? value3 : ((data[4] == data[2])  ? value2 : ((data[4] == data[1]) ? value1 : ((data[4] == 0) ? 0 : 4)));
 
         int value = (value4 << 12) | (value3 << 8) | (value2 << 4) | (value1 << 0);
         int start = value; 
@@ -898,8 +917,6 @@ bool move_ref(int dir)
 
     }
 
-
-
     if(DEBUG_MOVE_REF && debug) print_game();
 
     return moved;
@@ -914,14 +931,14 @@ bool move(int dir)
     if(MOVE_ALGO == 0) return move_ref(dir);
 
     /*
-        Iterations: 6825
-        Steps: 832
+        Iterations: 11120
+        Steps: 1296
     */
     if(MOVE_ALGO == 1) return move1(dir);
 
     /*
-        Iterations: 6825
-        Steps: 676
+        Iterations: 11120
+        Steps: 1053
     */
     if(MOVE_ALGO == 2) return move2(dir);
 
@@ -940,14 +957,13 @@ void debug_computeIndex()
 
     for(int dir = 1; dir <= 4; dir++)
     {
-        printf("\ndirection: %s (%d)\n", moves[dir], dir);
+        printf("\n direction: %s (%d)\n", moveLabels[dir], dir);
 
         for(int lane = 0; lane < NUM_BOARD; lane++)
         {
             for(int pos = 0; pos < NUM_BOARD; pos++)
             {
-                printf("%d.%d (%2d)  ", lane, pos, computeIndex(lane, pos, dir));
-                // printf("assert(computeIndex(%d, %d, %d) == %d);\n", lane, pos, dir, computeIndex(lane, pos, dir));
+                printf(" %d.%d (%2d)  ", lane, pos, computeIndex(lane, pos, dir));
             } 
             printf("\n");
         }
@@ -957,104 +973,6 @@ void debug_computeIndex()
 void test_computeIndex()
 {
     printf("[test_computeIndex] ");
-
-    // direction: ↑ (1)
-
-    assert(computeIndex(0, 0, MV_UP) == 12);
-    assert(computeIndex(0, 1, MV_UP) == 8);
-    assert(computeIndex(0, 2, MV_UP) == 4);
-    assert(computeIndex(0, 3, MV_UP) == 0);
-
-    assert(computeIndex(1, 0, MV_UP) == 13);
-    assert(computeIndex(1, 1, MV_UP) == 9);
-    assert(computeIndex(1, 2, MV_UP) == 5);
-    assert(computeIndex(1, 3, MV_UP) == 1);
-
-    assert(computeIndex(2, 0, MV_UP) == 14);
-    assert(computeIndex(2, 1, MV_UP) == 10);
-    assert(computeIndex(2, 2, MV_UP) == 6);
-    assert(computeIndex(2, 3, MV_UP) == 2);
-
-    assert(computeIndex(3, 0, MV_UP) == 15);
-    assert(computeIndex(3, 1, MV_UP) == 11);
-    assert(computeIndex(3, 2, MV_UP) == 7);
-    assert(computeIndex(3, 3, MV_UP) == 3);
-
-
-    // direction: ↓ (2)
-
-    assert(computeIndex(0, 0, MV_DOWN) == 0);
-    assert(computeIndex(0, 1, MV_DOWN) == 4);
-    assert(computeIndex(0, 2, MV_DOWN) == 8);
-    assert(computeIndex(0, 3, MV_DOWN) == 12);
-
-    assert(computeIndex(1, 0, MV_DOWN) == 1);
-    assert(computeIndex(1, 1, MV_DOWN) == 5);
-    assert(computeIndex(1, 2, MV_DOWN) == 9);
-    assert(computeIndex(1, 3, MV_DOWN) == 13);
-
-    assert(computeIndex(2, 0, MV_DOWN) == 2);
-    assert(computeIndex(2, 1, MV_DOWN) == 6);
-    assert(computeIndex(2, 2, MV_DOWN) == 10);
-    assert(computeIndex(2, 3, MV_DOWN) == 14);
-
-    assert(computeIndex(3, 0, MV_DOWN) == 3);
-    assert(computeIndex(3, 1, MV_DOWN) == 7);
-    assert(computeIndex(3, 2, MV_DOWN) == 11);
-    assert(computeIndex(3, 3, MV_DOWN) == 15);
-    
-
-    // direction: ← (3)
-
-    assert(computeIndex(0, 0, MV_LEFT) == 3);
-    assert(computeIndex(0, 1, MV_LEFT) == 2);
-    assert(computeIndex(0, 2, MV_LEFT) == 1);
-    assert(computeIndex(0, 3, MV_LEFT) == 0);
-
-    assert(computeIndex(1, 0, MV_LEFT) == 7);
-    assert(computeIndex(1, 1, MV_LEFT) == 6);
-    assert(computeIndex(1, 2, MV_LEFT) == 5);
-    assert(computeIndex(1, 3, MV_LEFT) == 4);
-
-    assert(computeIndex(2, 0, MV_LEFT) == 11);
-    assert(computeIndex(2, 1, MV_LEFT) == 10);
-    assert(computeIndex(2, 2, MV_LEFT) == 9);
-    assert(computeIndex(2, 3, MV_LEFT) == 8);
-
-    assert(computeIndex(3, 0, MV_LEFT) == 15);
-    assert(computeIndex(3, 1, MV_LEFT) == 14);
-    assert(computeIndex(3, 2, MV_LEFT) == 13);
-    assert(computeIndex(3, 3, MV_LEFT) == 12);
-
-
-    // direction: → (4)
-
-    assert(computeIndex(0, 0, MV_RIGHT) == 0);
-    assert(computeIndex(0, 1, MV_RIGHT) == 1);
-    assert(computeIndex(0, 2, MV_RIGHT) == 2);
-    assert(computeIndex(0, 3, MV_RIGHT) == 3);
-
-    assert(computeIndex(1, 0, MV_RIGHT) == 4);
-    assert(computeIndex(1, 1, MV_RIGHT) == 5);
-    assert(computeIndex(1, 2, MV_RIGHT) == 6);
-    assert(computeIndex(1, 3, MV_RIGHT) == 7);
-
-    assert(computeIndex(2, 0, MV_RIGHT) == 8);
-    assert(computeIndex(2, 1, MV_RIGHT) == 9);
-    assert(computeIndex(2, 2, MV_RIGHT) == 10);
-    assert(computeIndex(2, 3, MV_RIGHT) == 11);
-
-    assert(computeIndex(3, 0, MV_RIGHT) == 12);
-    assert(computeIndex(3, 1, MV_RIGHT) == 13);
-    assert(computeIndex(3, 2, MV_RIGHT) == 14);
-    assert(computeIndex(3, 3, MV_RIGHT) == 15);
-    
-    printf("ok.\n");
-}
-
-void test_computeIndex2()
-{
-    printf("[test_computeIndex2] ");
 
     strcpy(field, "123456789abcdefg");
 
@@ -1225,7 +1143,142 @@ struct test_fields_t test_fields[] = {
     {"1231123112311231", MV_RIGHT, "1231123112311231", false},
     {"1111222233331111", MV_UP,    "1111222233331111", false},
     {"1111222233331111", MV_DOWN,  "1111222233331111", false},
+
+
+    // variants
+    {"7 4efe722284g2a ", MV_LEFT,  " 74efe72 384 g2a", true }, // 4021432133214320
+    {"7 4efe722284g2a ", MV_RIGHT, "74e fe72384 g2a ", true }, // 1034123411341230
+    {"c2a7gf7  g2ggdgh", MV_UP,    " 2a  f77cg2ghdgh", true }, // 4444133002221111
+    {"2fge5815d 6e 9gc", MV_DOWN,  "2fge5815d96e  gc", true }, // 1111222230310414
+    {"b2 9h6e57gg1f3b ", MV_LEFT,  " b29h6e5 7h1 f3b", true }, // 4301432142214320
+    {"d257b6bh5fc299 d", MV_RIGHT, "d257b6bh5fc2ad  ", true }, // 1234121412341104
+    {"h9b6dg6d133c39f9", MV_RIGHT, "h9b6dg6d14c 39f9", true }, // 1234123112241232
+    {"chdg3 1a8f 49f29", MV_DOWN , "chdg3g1a8 249  9", true }, // 1111202233034344
+    {" g2 21d7b3af87g2", MV_LEFT , "  g221d7b3af87g2", true }, // 0320432143214321
+    {"49g79hfgfd 6b f9", MV_DOWN , "49g79hggfd 6b  9", true }, // 1111222233034024
+    {"6 16e4 bhh2hgag ", MV_LEFT , " 616 e4b x2h gag", true }, // 1021430111212320
+    {"6 16e4 bhh2hgag ", MV_RIGHT, "616 e4b x2h gag ", true }, // 1031120411311210
+    {"fb d629f435fcc6d", MV_UP   , "fb  629d435gcc6d", true }, // 4401333222221111
+    {"8 2c aa3bf 374h7", MV_LEFT , " 82c  b3 bf374h7", true }, // 4021022143011321
+    {"8 2c aa3bf 374h7", MV_RIGHT, "82c b3  bf3 74h7", true }, // 1034022412041231
+    {"94f25cd21dcbach ", MV_UP   , "94f 5cd 1dc3achb", true }, // 4443313322221110
+    {"94f25cd21dcbach ", MV_DOWN , "94f35cdb1dc ach ", true }, // 1111222133334240
+    {"bbb1g38defahb4b4", MV_LEFT , " bc1g38defahb4b4", true }, // 2221432143212121
+    {"bbb1g38defahb4b4", MV_RIGHT, "cb1 g38defahb4b4", true }, // 1114123412341212
+    {"gg g 997c eae9g5", MV_LEFT , "  gh  a7 ceae9g5", true }, // 1101022140214321
+    {"gg g 997c eae9g5", MV_RIGHT, "hg  a7  cea e9g5", true }, // 1101022410341234
+    {"  7e96f78e1d b31", MV_LEFT , "  7e96f78e1d b31", false}, // 0021432143210321
+    {"  7e96f78e1d b31", MV_RIGHT, "7e  96f78e1db31 ", true }, // 0034123412340234
+    {"7 98efg65 f5668 ", MV_UP   , "7 9 e g85ff66685", true }, // 4044333320221110
+    {" 2 2g4h23e7 e c1", MV_LEFT , "   3g4h2 3e7 ec1", true }, // 0101432143204021
+    {"7198b4dbgecc   e", MV_LEFT , "7198b4db ged   e", true }, // 4321132143110001
+    {"7198b4dbgecc   e", MV_RIGHT, "7198b4dbged e   ", true }, // 1234123112330004
+    {"6bb 6 dd d73 369", MV_UP   , "  b  bdd d737369", true }, // 3440303302220111
+    {"6bb 6 dd d73 369", MV_DOWN , "7bbd dd3 379  6 ", true }, // 1110102203330444
 };
+
+typedef struct variant_store_st
+{
+    int num;
+    bool v[5][5][5][5];
+} variant_store_t;
+
+variant_store_t testVariants = { 0, {false}};
+
+bool updateVariant(variant_store_t *variants, int lane, int dir)
+{    
+    bool *v = &(variants->v[moveRefLastValues[ computeIndex(lane, 0, dir)]]\
+                           [moveRefLastValues[ computeIndex(lane, 1, dir)]]\
+                           [moveRefLastValues[ computeIndex(lane, 2, dir)]]\
+                           [moveRefLastValues[ computeIndex(lane, 3, dir)]]);
+
+    if(!*v)
+    {
+        *v = true;
+        variants->num++;
+        return true;
+    }
+
+    return false;
+}
+
+variant_store_t* validate_move_tests(variant_store_t *variants)
+{
+    int numTests = sizeof(test_fields)/sizeof(test_fields[0]);
+    for(int i = 0; i < numTests; i++)
+    {
+        int dir = test_fields[i].dir;
+        strncpy(field, test_fields[i].test, NUM_FIELD); 
+        move_ref(dir);
+
+        for(int lane = 0; lane < NUM_BOARD; lane++)
+        {
+           updateVariant(variants, lane, dir);
+        }
+    }
+
+    return variants;
+}
+
+void printLastVariante()
+{
+    for(int i = 0; i < NUM_FIELD; i++)
+    {
+        printf("%x", moveRefLastValues[i]);
+    }
+}
+
+void search_variants_rnd(size_t limit)
+{
+    printf("\n=== search_variants_rnd ===\n");
+
+    printf("\n Limit: %d", limit);
+    printf("\n Known Variants: %d\n\n", testVariants.num);
+
+    int newVariants = 0;
+    char test[NUM_FIELD + 1]   = "                ";
+
+    srand((unsigned int) time(NULL));
+
+    for(int i = 0; i < limit; i++)
+    {
+        for(int j = 0; j < NUM_FIELD; j++)
+        {
+            test[j] = signs[(rand() % NUM_SIGNS)];
+        }
+
+        for(int dir = 1; dir <= NUM_DIRS; dir++)
+        {
+            strncpy(field, test, NUM_FIELD);
+            bool moved = move_ref(dir);
+
+            bool newVariantFound = false;
+
+            for(int lane = 0; lane < NUM_BOARD; lane++)
+            {
+                if(updateVariant(&testVariants, lane, dir))
+                {
+                    newVariantFound = true;
+                }
+            }
+
+            if(newVariantFound || DEBUG_SEARCH)
+            {
+                newVariants++;
+
+                printf(" {\"%s\", %s, \"%s\", %s}, // (", test, moveNames[dir], field, moved ? "true " : "false");
+                printLastVariante();
+                printf(")");
+                if(DEBUG_SEARCH && newVariantFound) printf(" (new)");
+                printf("\n");
+            }
+        }
+    }
+
+    printf("\n New Variants: %d", newVariants);
+
+    printf("\n");    
+}
 
 void debug_move()
 {
@@ -1240,13 +1293,15 @@ void debug_move()
     int interationsTotal = 0;
     int stepsTotal = 0;
 
+    printf("\n [ #] ✥ field             variant             St Itr\n");
+
     int numTests = sizeof(test_fields)/sizeof(test_fields[0]);
     for(int i = 0; i < numTests; i++)
     {
         strncpy(field, test_fields[i].test, NUM_FIELD); 
         
         if(debug) printf("\n");
-        if(debug) printf("[%d] setuo (%s) '%s'\n", i, moves[test_fields[i].dir], field);
+        if(debug) printf("[%d] setup (%s) '%s'\n", i, moveLabels[test_fields[i].dir], field);
         if(debug) print_game();
 
         int moved1 = move_ref(test_fields[i].dir);
@@ -1263,16 +1318,20 @@ void debug_move()
         interationsTotal += numIterations;
         stepsTotal += numSteps;
 
-        if(debug) printf("[%d] test      %s  '%s'\n", i, moves[test_fields[i].dir], field);
+        if(debug) printf("[%d] test      %s  '%s'\n", i, moveLabels[test_fields[i].dir], field);
         if(debug) print_game();
 
         bool testMoved = (moved1 == moved2);
         bool testField = (strcmp(result, field) == 0);
 
-        if(debug) printf("[%d] test    : %s  '%s'\n", i, moves[test_fields[i].dir], field);
+        if(debug) printf("[%d] test    : %s  '%s'\n", i, moveLabels[test_fields[i].dir], field);
         if(debug) printf("[%d] mov Ref : %d, '%s'\n", i, moved1, result);
         if(debug) printf("[%d] mov Test: %d, '%s'\n", i, moved2, field);
         if(debug) printf("\n");
+
+        printf(" [%2d] %s '%s'(", i, moveLabels[test_fields[i].dir],  test_fields[i].test);
+        printLastVariante();
+        printf("): %2d %3d\n", numSteps, numIterations);
 
         if(!debug && (!testMoved || !testField))
         {
@@ -1285,10 +1344,13 @@ void debug_move()
         assert(testField);   
     }
 
+    int numVariants = validate_move_tests(&testVariants)->num;
+
     printf("\n");
-    printf("Num Tests: %d\n", numTests);
-    printf("Iterations: %d\n", interationsTotal);
-    printf("Steps: %d\n", stepsTotal);
+    printf(" NumTests: %d\n", numTests);
+    printf(" Variants: %d\n", numVariants);
+    printf(" Iterations: %d\n", interationsTotal);
+    printf(" Steps: %d\n", stepsTotal);
 }
 
 void test_move()
@@ -1310,7 +1372,7 @@ void test_move()
         
         if(debug) printf("\n"); 
         if(debug) print_game();
-        if(debug) printf("'%s' %s '%s' (%s): '%s' (%s) [%3d][%2d]\n", test_fields[i].test, moves[test_fields[i].dir], test_fields[i].result, test_fields[i].moved ? "true " : "false", field, moved ? "true " : "false", numIterations, numSteps);
+        if(debug) printf("'%s' %s '%s' (%s): '%s' (%s) [%3d][%2d]\n", test_fields[i].test, moveLabels[test_fields[i].dir], test_fields[i].result, test_fields[i].moved ? "true " : "false", field, moved ? "true " : "false", numIterations, numSteps);
         
         bool testMoved = (test_fields[i].moved == moved);
         bool testField = (strcmp(field, test_fields[i].result) == 0);
@@ -1330,20 +1392,21 @@ void test_move()
     printf("ok.\n");
 }
 
-
 int main()
 {
     int ch;
     bool moved = true;
     size_t numMoves = 0;
   
+    if(DEBUG) search_variants_rnd(1);
     if(DEBUG) debug_spawn_tetrisrng();
     if(DEBUG) debug_computeIndex();
     if(DEBUG) debug_move();  
-    if(DEBUG) printf("\n=== tests ===\n"); 
 
+    if(SEARCH) search_variants_rnd(NUM_SEARCH);
+
+    if(DEBUG) printf("\n=== tests ===\n\n"); 
     test_computeIndex();
-    test_computeIndex2();
     test_move();    
     
     if(DEBUG) return 0;
@@ -1363,7 +1426,7 @@ int main()
             numMoves++;
             spawn();
 
-            printf("\nfield: '%s' score: %s last spawn: %d last move: %s step: %zu\n", field, score, lastSpawn, moves[lastMove], numMoves);
+            printf("\nfield: '%s' score: %s last spawn: %d last move: %s step: %zu\n", field, score, lastSpawn, moveLabels[lastMove], numMoves);
             print_game();
             
             moved = false;
