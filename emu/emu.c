@@ -1,3 +1,4 @@
+
 /* emulator to develop and debug the game logic  */
 
 #include <stdio.h>
@@ -11,24 +12,66 @@
 #include <termios.h>
 #include <unistd.h>
 
+/* === SETTINGS ==== */
+
+/*
+    debug settings
+    0 disable
+    1 enabled
+*/
+
+// call debug functions and ext
 #define DEBUG 0
+// detailed messages in case of error
 #define DEBUG_MOVE 0
+// detailed messages in case of error
 #define DEBUG_MOVE_REF 0
-#define DEBUG_MOVE_TEST 0
+// detailed messages during progress
 #define DEBUG_SEARCH 0
 
-#define MOVE_ALGO 2
+/*
+    Search for variants to be used as test cases
+    0 disable
+    1 enabled
+
+    generates random values and checks if they lead to new variants
+ */
 #define SEARCH 0
+
+// number of search steps
 #define NUM_SEARCH UINT32_MAX
 
+/* Select which implementation to use for moving tiles
+   0 refernce (hardcoded)
+   1 v1
+   2 v2
+*/
+#define MOVE_ALGO 2
+
+/* Select which implementation to use for spawning tiles
+   0 manual
+   1 time random
+   2 linear feedback shift register 
+*/
+#define SPAWN 1    
+
+
+/* === DEFINITIONS ==== */
+
+/* this is not really configurable */
+
+// number of directions
 #define NUM_DIRS  4
+// widht of the board (x = y = widht)
 #define NUM_BOARD 4
+// number of fields on the bord
 #define NUM_FIELD (NUM_BOARD * NUM_BOARD)
+// number of fields to display the score
 #define NUM_SCORE 7
+// number of different signs on the board
 #define NUM_SIGNS 18
 
-bool debug = false;
-static int moveRefLastValues[NUM_FIELD] = {0};
+/* === plattform functions ==== */
 
 int getch(void)
 {
@@ -45,6 +88,9 @@ int getch(void)
 #define GETCH() getch()
 #define CLEAR() system("clear");
 
+/* === globals ==== */
+
+// move directions
 typedef enum move_direction_en {
     MV_UP = 1,
     MV_DOWN = 2,
@@ -61,16 +107,183 @@ char moveNames[5][9] =
     "MV_RIGHT"
 };
 
-
-static move_direction_t lastMove = 0;
-static int lastSpawn = 0;
 static char moveLabels[][4] = { " ", "↑", "↓", "←", "→" };
+
+// board is stored as chars
 static char field[NUM_FIELD + 1] = "                ";
-static int fieldIndex = 0;
-static int numIterations = 0;
-static int numSteps = 0;
-static char score[NUM_SCORE + 1] = "      0";
 static char signs[] = {' ', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'x'};
+// score is stored as chars (base 10)
+static char score[NUM_SCORE + 1] = "      0";
+
+// last move
+static move_direction_t lastMove = 0;
+
+// last sign spawned
+static int lastSpawn = 0;
+// last field of board accessed by memory function
+static int fieldIndex = 0;
+// num shifts through memory
+static int numIterations = 0;
+// num iterations thorugh move logic
+static int numSteps = 0;
+
+//  linear feedback shift register init value
+static uint16_t rng_value = 0x8988;
+
+// output debug info (is set in case of error)
+bool debug = false;
+
+/* store variant seen in any lane an
+
+    v       values as seen in one lane
+    num     total numbers of variants stored
+
+ */
+typedef struct variant_store_st
+{
+    int num;
+    bool v[5][5][5][5];
+} variant_store_t;
+
+variant_store_t testVariants = { 0, {{{{false}}}}};
+
+// variations data of last move from reference 
+static int moveRefLastValues[NUM_FIELD] = {0};
+
+
+/* === MEMORY FUNCTIONS ==== */
+
+    /*
+        Memory is organized as shift register (16x8bit)
+    
+                        ╔═══╦═══╦═══╦═══╗
+            <-----------║ f ║ e ║ d ║ c ║-----.
+                        ╟───╫───╫───╫───╢     |
+                    .-------------------------´
+                    |   ╟───╫───╫───╫───╢
+                    `---║ b ║ a ║ 9 ║ 8 ║-----.
+                        ╟───╫───╫───╫───╢     |
+                    .-------------------------´
+                    |   ╟───╫───╫───╫───╢
+                    `---║ 7 ║ 6 ║ 5 ║ 4 ║-----.
+                        ╟───╫───╫───╫───╢     |
+                    .-------------------------´
+                    |   ╟───╫───╫───╫───╢
+                    `---║ 3 ║ 2 ║ 1 ║ 0 ║-----.
+                        ╚═══╩═══╩═══╩═══╝     |
+            >---------------------------------´
+
+        Data is evaluated in lanes starting with the position clostest to the edge in the moving direction
+    */
+
+/*
+    computes the index for a given lane, position and moving direction
+*/ 
+int computeIndex(int lane, int pos, int dir)
+{   
+
+    switch(dir)
+    {
+        /* 
+            lane    pos 0 1 2 3
+
+              0         f e d c
+              1         b a 9 8
+              2         7 6 5 4
+              3         3 2 1 0
+         */
+        case MV_LEFT: return (lane * NUM_BOARD) + (NUM_BOARD - pos - 1);
+
+        /* 
+            lane    pos 3 2 1 0
+
+              0         f e d c
+              1         b a 9 8
+              2         7 6 5 4
+              3         3 2 1 0
+         */
+        case MV_RIGHT: return (lane * NUM_BOARD) + pos;
+
+        /* 
+             pos   lane 0 1 2 3
+
+              0         f e d c
+              1         b a 9 8
+              2         7 6 5 4
+              3         3 2 1 0
+         */
+        case MV_UP: return lane + ((NUM_BOARD - pos - 1) * NUM_BOARD);
+
+        /* 
+             pos  lane  0 1 2 3
+
+              3         f e d c
+              2         b a 9 8
+              1         7 6 5 4
+              0         3 2 1 0
+         */
+        case MV_DOWN: return lane + (pos * NUM_BOARD);
+
+    }
+
+    assert(false);
+    return -1;
+}
+
+/*
+    computes the distance (number of shifts in one direction) between 2 indexes
+*/
+int computeMemoryDistance(int index)
+{
+    if(index >= fieldIndex) return index - fieldIndex;
+    else                    return (NUM_FIELD - fieldIndex) + index;
+}
+
+/*
+    get data from memory and update statisticall data
+*/
+int accessMemory(int index, bool write, int data)
+{
+    numIterations += computeMemoryDistance(index);
+
+    assert(write ? data > 0 : data == 0);
+    assert(index >= 0);
+    assert(index < NUM_FIELD);
+
+    fieldIndex = index;
+
+    if(write) 
+    {
+        field[index] = data;
+    }
+    
+    return field[index];
+}
+
+/*
+    red the value of the last accessed index
+*/
+int getCurrentValue()
+{
+    return field[fieldIndex];
+}
+
+/*
+    convert the sign to a binary number
+*/
+int getSignValue(char sign)
+{
+    int value = 0;
+
+    for(int i = 0; i < NUM_SIGNS; i++)
+    {
+        if(sign == signs[i]) value = i;
+    }
+
+    return value;
+}
+
+/* === HELPER FUNCTION  ==== */
 
 void print_game()
 {
@@ -99,6 +312,34 @@ void print_game()
    printf("╚═══╩═══╩═══╩═══╝\n");
 }
 
+void print_lane(int lane, int dir)
+{
+    printf("║ %c | %c | %c | %c ║", 
+    field[computeIndex(lane, 0, dir)], 
+    field[computeIndex(lane, 1, dir)], 
+    field[computeIndex(lane, 2, dir)], 
+    field[computeIndex(lane, 3, dir)]);
+}
+
+void printBits(size_t const size, void const * const ptr)
+{
+    unsigned char *b = (unsigned char*) ptr;
+    unsigned char byte;
+    int i, j;
+    
+    for (i = size-1; i >= 0; i--) {
+        for (j = 7; j >= 0; j--) {
+            byte = (b[i] >> j) & 1;
+            printf("%u", byte);
+        }
+    }
+}
+
+/* === GAME FUNCTIONS ==== */
+
+/*
+    spawn new tiles using time based rand
+ */
 void spawn_timerandom()
 {
     int numSpotsLeft = 0;
@@ -136,6 +377,9 @@ void spawn_timerandom()
     }
 }
 
+/*
+    select where to spawn a new tile
+ */
 void spawn_manual()
 {
     bool spawned = false;
@@ -196,144 +440,21 @@ void spawn_manual()
 
 }
 
-static uint16_t rng_value = 0x8988;
-
+/*
+    spawn new tiles using  linear feedback shift register 
+ */
 void spawn_tetrisrng()
 {
   rng_value = ((((rng_value >> 9) & 1) ^ ((rng_value >> 1) & 1)) << 15) | (rng_value >> 1);
 }
 
-void printBits(size_t const size, void const * const ptr)
-{
-    unsigned char *b = (unsigned char*) ptr;
-    unsigned char byte;
-    int i, j;
-    
-    for (i = size-1; i >= 0; i--) {
-        for (j = 7; j >= 0; j--) {
-            byte = (b[i] >> j) & 1;
-            printf("%u", byte);
-        }
-    }
-}
-
-void debug_spawn_tetrisrng()
-{
-    printf("\n=== debug_spawn_tetrisrng ===\n\n");
-
-    for(int i = 0; i < 16; i++)
-    {
-        printf(" ");
-        printBits(sizeof(uint16_t), &rng_value); printf(" %04x\n", rng_value);
-        spawn_tetrisrng();
-    }
-}
-
 void spawn()
 {
-    spawn_timerandom();
-}
-
-
-int computeIndex(int lane, int pos, int dir)
-{   
-
-    switch(dir)
-    {
-        /* 
-            lane    pos 0 1 2 3
-
-              0         f e d c
-              1         b a 9 8
-              2         7 6 5 4
-              3         3 2 1 0
-         */
-        case MV_LEFT: return (lane * NUM_BOARD) + (NUM_BOARD - pos - 1);
-
-        /* 
-            lane    pos 3 2 1 0
-
-              0         f e d c
-              1         b a 9 8
-              2         7 6 5 4
-              3         3 2 1 0
-         */
-        case MV_RIGHT: return (lane * NUM_BOARD) + pos;
-
-        /* 
-             pos   lane 0 1 2 3
-
-              0         f e d c
-              1         b a 9 8
-              2         7 6 5 4
-              3         3 2 1 0
-         */
-        case MV_UP: return lane + ((NUM_BOARD - pos - 1) * NUM_BOARD);
-
-        /* 
-             pos  lane  0 1 2 3
-
-              3         f e d c
-              2         b a 9 8
-              1         7 6 5 4
-              0         3 2 1 0
-         */
-        case MV_DOWN: return lane + (pos * NUM_BOARD);
-
-    }
+    if(SPAWN == 0) return spawn_manual();
+    if(SPAWN == 1) return spawn_timerandom();
+    if(SPAWN == 2) return spawn_tetrisrng();
 
     assert(false);
-    return -1;
-}
-
-void print_lane(int lane, int dir)
-{
-    printf("║ %c | %c | %c | %c ║", 
-    field[computeIndex(lane, 0, dir)], 
-    field[computeIndex(lane, 1, dir)], 
-    field[computeIndex(lane, 2, dir)], 
-    field[computeIndex(lane, 3, dir)]);
-}
-
-int computeMemoryDistance(int index)
-{
-    if(index >= fieldIndex) return index - fieldIndex;
-    else                    return (NUM_FIELD - fieldIndex) + index;
-}
-
-int accessMemory(int index, bool write, int data)
-{
-    numIterations += computeMemoryDistance(index);
-
-    assert(write ? data > 0 : data == 0);
-    assert(index >= 0);
-    assert(index < NUM_FIELD);
-
-    fieldIndex = index;
-
-    if(write) 
-    {
-        field[index] = data;
-    }
-    
-    return field[index];
-}
-
-int getCurrentValue()
-{
-    return field[fieldIndex];
-}
-
-int getSignValue(int sign)
-{
-    int value = 0;
-
-    for(int i = 0; i < NUM_SIGNS; i++)
-    {
-        if(sign == signs[i]) value = i;
-    }
-
-    return value;
 }
 
 void addScore(int value)
@@ -347,8 +468,12 @@ void addScore(int value)
 }
 
 /*
+    Move Function
 
-    == Evaluation ==   
+    uses a buffer to hold a value and the current shift register value (data) to updat the field based on the move
+    only two values are loaded each step
+
+    # Evaluation #
 
     position    0   1   2   3 
 
@@ -471,6 +596,7 @@ bool move2(move_direction_t dir)
     {       
         numSteps += 1;
 
+        // Logic
         bool isBaseZero  = (buff == signs[0]);
         bool isViewZero  = (data == signs[0]);    
         bool eqBaseView  = (buff == data);        
@@ -684,6 +810,9 @@ bool move1(move_direction_t dir)
     return hasMoved;
 }
 
+/*
+    hardcoded move function for refernce and testing
+ */
 bool move_ref(int dir)
 {
 
@@ -947,118 +1076,12 @@ bool move(int dir)
 
 bool canmove()
 {
+    /* TODO */
     return true;
 }
 
 
-void debug_computeIndex()
-{
-    printf("\n=== debug_computeIndex ===\n");
-
-    for(int dir = 1; dir <= 4; dir++)
-    {
-        printf("\n direction: %s (%d)\n", moveLabels[dir], dir);
-
-        for(int lane = 0; lane < NUM_BOARD; lane++)
-        {
-            for(int pos = 0; pos < NUM_BOARD; pos++)
-            {
-                printf(" %d.%d (%2d)  ", lane, pos, computeIndex(lane, pos, dir));
-            } 
-            printf("\n");
-        }
-    }
-}
-
-void test_computeIndex()
-{
-    printf("[test_computeIndex] ");
-
-    strcpy(field, "123456789abcdefg");
-
-    /*
-    ╔═══╦═══╦═══╦═══╗
-    ║ g ║ f ║ e ║ d ║
-    ╟───╫───╫───╫───╢
-    ║ c ║ b ║ a ║ 9 ║
-    ╟───╫───╫───╫───╢
-    ║ 8 ║ 7 ║ 6 ║ 5 ║
-    ╟───╫───╫───╫───╢
-    ║ 4 ║ 3 ║ 2 ║ 1 ║
-    ╚═══╩═══╩═══╩═══╝
-
-    */
-
-    assert(field[computeIndex(0, 0, MV_LEFT)] == '4');
-    assert(field[computeIndex(0, 1, MV_LEFT)] == '3');
-    assert(field[computeIndex(0, 2, MV_LEFT)] == '2');
-    assert(field[computeIndex(0, 3, MV_LEFT)] == '1');
-    assert(field[computeIndex(1, 0, MV_LEFT)] == '8');
-    assert(field[computeIndex(1, 1, MV_LEFT)] == '7');
-    assert(field[computeIndex(1, 2, MV_LEFT)] == '6');
-    assert(field[computeIndex(1, 3, MV_LEFT)] == '5');
-    assert(field[computeIndex(2, 0, MV_LEFT)] == 'c');
-    assert(field[computeIndex(2, 1, MV_LEFT)] == 'b');
-    assert(field[computeIndex(2, 2, MV_LEFT)] == 'a');
-    assert(field[computeIndex(2, 3, MV_LEFT)] == '9');
-    assert(field[computeIndex(3, 0, MV_LEFT)] == 'g');
-    assert(field[computeIndex(3, 1, MV_LEFT)] == 'f');
-    assert(field[computeIndex(3, 2, MV_LEFT)] == 'e');
-    assert(field[computeIndex(3, 3, MV_LEFT)] == 'd');
-
-    assert(field[computeIndex(0, 0, MV_RIGHT)] == '1');
-    assert(field[computeIndex(0, 1, MV_RIGHT)] == '2');
-    assert(field[computeIndex(0, 2, MV_RIGHT)] == '3');
-    assert(field[computeIndex(0, 3, MV_RIGHT)] == '4');
-    assert(field[computeIndex(1, 0, MV_RIGHT)] == '5');
-    assert(field[computeIndex(1, 1, MV_RIGHT)] == '6');
-    assert(field[computeIndex(1, 2, MV_RIGHT)] == '7');
-    assert(field[computeIndex(1, 3, MV_RIGHT)] == '8');
-    assert(field[computeIndex(2, 0, MV_RIGHT)] == '9');
-    assert(field[computeIndex(2, 1, MV_RIGHT)] == 'a');
-    assert(field[computeIndex(2, 2, MV_RIGHT)] == 'b');
-    assert(field[computeIndex(2, 3, MV_RIGHT)] == 'c');
-    assert(field[computeIndex(3, 0, MV_RIGHT)] == 'd');
-    assert(field[computeIndex(3, 1, MV_RIGHT)] == 'e');
-    assert(field[computeIndex(3, 2, MV_RIGHT)] == 'f');
-    assert(field[computeIndex(3, 3, MV_RIGHT)] == 'g');
-
-    assert(field[computeIndex(0, 0, MV_UP)] == 'd');
-    assert(field[computeIndex(0, 1, MV_UP)] == '9');
-    assert(field[computeIndex(0, 2, MV_UP)] == '5');
-    assert(field[computeIndex(0, 3, MV_UP)] == '1');
-    assert(field[computeIndex(1, 0, MV_UP)] == 'e');
-    assert(field[computeIndex(1, 1, MV_UP)] == 'a');
-    assert(field[computeIndex(1, 2, MV_UP)] == '6');
-    assert(field[computeIndex(1, 3, MV_UP)] == '2');
-    assert(field[computeIndex(2, 0, MV_UP)] == 'f');
-    assert(field[computeIndex(2, 1, MV_UP)] == 'b');
-    assert(field[computeIndex(2, 2, MV_UP)] == '7');
-    assert(field[computeIndex(2, 3, MV_UP)] == '3');
-    assert(field[computeIndex(3, 0, MV_UP)] == 'g');
-    assert(field[computeIndex(3, 1, MV_UP)] == 'c');
-    assert(field[computeIndex(3, 2, MV_UP)] == '8');
-    assert(field[computeIndex(3, 3, MV_UP)] == '4');
-
-    assert(field[computeIndex(0, 0, MV_DOWN)] == '1');
-    assert(field[computeIndex(0, 1, MV_DOWN)] == '5');
-    assert(field[computeIndex(0, 2, MV_DOWN)] == '9');
-    assert(field[computeIndex(0, 3, MV_DOWN)] == 'd');
-    assert(field[computeIndex(1, 0, MV_DOWN)] == '2');
-    assert(field[computeIndex(1, 1, MV_DOWN)] == '6');
-    assert(field[computeIndex(1, 2, MV_DOWN)] == 'a');
-    assert(field[computeIndex(1, 3, MV_DOWN)] == 'e');
-    assert(field[computeIndex(2, 0, MV_DOWN)] == '3');
-    assert(field[computeIndex(2, 1, MV_DOWN)] == '7');
-    assert(field[computeIndex(2, 2, MV_DOWN)] == 'b');
-    assert(field[computeIndex(2, 3, MV_DOWN)] == 'f');
-    assert(field[computeIndex(3, 0, MV_DOWN)] == '4');
-    assert(field[computeIndex(3, 1, MV_DOWN)] == '8');
-    assert(field[computeIndex(3, 2, MV_DOWN)] == 'c');
-    assert(field[computeIndex(3, 3, MV_DOWN)] == 'g');
-
-    printf("ok.\n");
-}
+/* === SHARED TEST CASES ==== */
 
 struct test_fields_t
 {
@@ -1177,13 +1200,8 @@ struct test_fields_t test_fields[] = {
     {"6bb 6 dd d73 369", MV_DOWN , "7bbd dd3 379  6 ", true }, // 1110102203330444
 };
 
-typedef struct variant_store_st
-{
-    int num;
-    bool v[5][5][5][5];
-} variant_store_t;
 
-variant_store_t testVariants = { 0, {false}};
+/* === VARIANT SEARCH ==== */
 
 bool updateVariant(variant_store_t *variants, int lane, int dir)
 {    
@@ -1232,7 +1250,7 @@ void search_variants_rnd(size_t limit)
 {
     printf("\n=== search_variants_rnd ===\n");
 
-    printf("\n Limit: %d", limit);
+    printf("\n Limit: %lu", limit);
     printf("\n Known Variants: %d\n\n", testVariants.num);
 
     int newVariants = 0;
@@ -1240,7 +1258,7 @@ void search_variants_rnd(size_t limit)
 
     srand((unsigned int) time(NULL));
 
-    for(int i = 0; i < limit; i++)
+    for(size_t i = 0; i < limit; i++)
     {
         for(int j = 0; j < NUM_FIELD; j++)
         {
@@ -1280,12 +1298,45 @@ void search_variants_rnd(size_t limit)
     printf("\n");    
 }
 
+
+/* === DEBUG FUNCTIONS ==== */
+
+void debug_spawn_tetrisrng()
+{
+    printf("\n=== debug_spawn_tetrisrng ===\n\n");
+
+    for(int i = 0; i < 16; i++)
+    {
+        printf(" ");
+        printBits(sizeof(uint16_t), &rng_value); printf(" %04x\n", rng_value);
+        spawn_tetrisrng();
+    }
+}
+
+void debug_computeIndex()
+{
+    printf("\n=== debug_computeIndex ===\n");
+
+    for(int dir = 1; dir <= 4; dir++)
+    {
+        printf("\n direction: %s (%d)\n", moveLabels[dir], dir);
+
+        for(int lane = 0; lane < NUM_BOARD; lane++)
+        {
+            for(int pos = 0; pos < NUM_BOARD; pos++)
+            {
+                printf(" %d.%d (%2d)  ", lane, pos, computeIndex(lane, pos, dir));
+            } 
+            printf("\n");
+        }
+    }
+}
+
 void debug_move()
 {
 
     printf("\n=== debug_move ===\n");
 
-    char test[NUM_FIELD + 1]   = "                ";
     char result[NUM_FIELD + 1] = "                ";
 
     debug = 0;
@@ -1322,7 +1373,7 @@ void debug_move()
         if(debug) print_game();
 
         bool testMoved = (moved1 == moved2);
-        bool testField = (strcmp(result, field) == 0);
+        bool testField = (strncmp(result, field, NUM_FIELD) == 0);
 
         if(debug) printf("[%d] test    : %s  '%s'\n", i, moveLabels[test_fields[i].dir], field);
         if(debug) printf("[%d] mov Ref : %d, '%s'\n", i, moved1, result);
@@ -1353,6 +1404,99 @@ void debug_move()
     printf(" Steps: %d\n", stepsTotal);
 }
 
+
+/* === TEST FUNCTIONS ==== */
+
+void test_computeIndex()
+{
+    printf("[test_computeIndex] ");
+
+    strncpy(field, "123456789abcdefg", NUM_FIELD+1);
+
+    /*
+    ╔═══╦═══╦═══╦═══╗
+    ║ g ║ f ║ e ║ d ║
+    ╟───╫───╫───╫───╢
+    ║ c ║ b ║ a ║ 9 ║
+    ╟───╫───╫───╫───╢
+    ║ 8 ║ 7 ║ 6 ║ 5 ║
+    ╟───╫───╫───╫───╢
+    ║ 4 ║ 3 ║ 2 ║ 1 ║
+    ╚═══╩═══╩═══╩═══╝
+
+    */
+
+    assert(field[computeIndex(0, 0, MV_LEFT)] == '4');
+    assert(field[computeIndex(0, 1, MV_LEFT)] == '3');
+    assert(field[computeIndex(0, 2, MV_LEFT)] == '2');
+    assert(field[computeIndex(0, 3, MV_LEFT)] == '1');
+    assert(field[computeIndex(1, 0, MV_LEFT)] == '8');
+    assert(field[computeIndex(1, 1, MV_LEFT)] == '7');
+    assert(field[computeIndex(1, 2, MV_LEFT)] == '6');
+    assert(field[computeIndex(1, 3, MV_LEFT)] == '5');
+    assert(field[computeIndex(2, 0, MV_LEFT)] == 'c');
+    assert(field[computeIndex(2, 1, MV_LEFT)] == 'b');
+    assert(field[computeIndex(2, 2, MV_LEFT)] == 'a');
+    assert(field[computeIndex(2, 3, MV_LEFT)] == '9');
+    assert(field[computeIndex(3, 0, MV_LEFT)] == 'g');
+    assert(field[computeIndex(3, 1, MV_LEFT)] == 'f');
+    assert(field[computeIndex(3, 2, MV_LEFT)] == 'e');
+    assert(field[computeIndex(3, 3, MV_LEFT)] == 'd');
+
+    assert(field[computeIndex(0, 0, MV_RIGHT)] == '1');
+    assert(field[computeIndex(0, 1, MV_RIGHT)] == '2');
+    assert(field[computeIndex(0, 2, MV_RIGHT)] == '3');
+    assert(field[computeIndex(0, 3, MV_RIGHT)] == '4');
+    assert(field[computeIndex(1, 0, MV_RIGHT)] == '5');
+    assert(field[computeIndex(1, 1, MV_RIGHT)] == '6');
+    assert(field[computeIndex(1, 2, MV_RIGHT)] == '7');
+    assert(field[computeIndex(1, 3, MV_RIGHT)] == '8');
+    assert(field[computeIndex(2, 0, MV_RIGHT)] == '9');
+    assert(field[computeIndex(2, 1, MV_RIGHT)] == 'a');
+    assert(field[computeIndex(2, 2, MV_RIGHT)] == 'b');
+    assert(field[computeIndex(2, 3, MV_RIGHT)] == 'c');
+    assert(field[computeIndex(3, 0, MV_RIGHT)] == 'd');
+    assert(field[computeIndex(3, 1, MV_RIGHT)] == 'e');
+    assert(field[computeIndex(3, 2, MV_RIGHT)] == 'f');
+    assert(field[computeIndex(3, 3, MV_RIGHT)] == 'g');
+
+    assert(field[computeIndex(0, 0, MV_UP)] == 'd');
+    assert(field[computeIndex(0, 1, MV_UP)] == '9');
+    assert(field[computeIndex(0, 2, MV_UP)] == '5');
+    assert(field[computeIndex(0, 3, MV_UP)] == '1');
+    assert(field[computeIndex(1, 0, MV_UP)] == 'e');
+    assert(field[computeIndex(1, 1, MV_UP)] == 'a');
+    assert(field[computeIndex(1, 2, MV_UP)] == '6');
+    assert(field[computeIndex(1, 3, MV_UP)] == '2');
+    assert(field[computeIndex(2, 0, MV_UP)] == 'f');
+    assert(field[computeIndex(2, 1, MV_UP)] == 'b');
+    assert(field[computeIndex(2, 2, MV_UP)] == '7');
+    assert(field[computeIndex(2, 3, MV_UP)] == '3');
+    assert(field[computeIndex(3, 0, MV_UP)] == 'g');
+    assert(field[computeIndex(3, 1, MV_UP)] == 'c');
+    assert(field[computeIndex(3, 2, MV_UP)] == '8');
+    assert(field[computeIndex(3, 3, MV_UP)] == '4');
+
+    assert(field[computeIndex(0, 0, MV_DOWN)] == '1');
+    assert(field[computeIndex(0, 1, MV_DOWN)] == '5');
+    assert(field[computeIndex(0, 2, MV_DOWN)] == '9');
+    assert(field[computeIndex(0, 3, MV_DOWN)] == 'd');
+    assert(field[computeIndex(1, 0, MV_DOWN)] == '2');
+    assert(field[computeIndex(1, 1, MV_DOWN)] == '6');
+    assert(field[computeIndex(1, 2, MV_DOWN)] == 'a');
+    assert(field[computeIndex(1, 3, MV_DOWN)] == 'e');
+    assert(field[computeIndex(2, 0, MV_DOWN)] == '3');
+    assert(field[computeIndex(2, 1, MV_DOWN)] == '7');
+    assert(field[computeIndex(2, 2, MV_DOWN)] == 'b');
+    assert(field[computeIndex(2, 3, MV_DOWN)] == 'f');
+    assert(field[computeIndex(3, 0, MV_DOWN)] == '4');
+    assert(field[computeIndex(3, 1, MV_DOWN)] == '8');
+    assert(field[computeIndex(3, 2, MV_DOWN)] == 'c');
+    assert(field[computeIndex(3, 3, MV_DOWN)] == 'g');
+
+    printf("ok.\n");
+}
+
 void test_move()
 {
     printf("[test_move] ");
@@ -1375,7 +1519,7 @@ void test_move()
         if(debug) printf("'%s' %s '%s' (%s): '%s' (%s) [%3d][%2d]\n", test_fields[i].test, moveLabels[test_fields[i].dir], test_fields[i].result, test_fields[i].moved ? "true " : "false", field, moved ? "true " : "false", numIterations, numSteps);
         
         bool testMoved = (test_fields[i].moved == moved);
-        bool testField = (strcmp(field, test_fields[i].result) == 0);
+        bool testField = (strncmp(field, test_fields[i].result, NUM_FIELD) == 0);
 
         if(!debug && (!testMoved || !testField))
         {
@@ -1391,6 +1535,9 @@ void test_move()
 
     printf("ok.\n");
 }
+
+
+/* === MAIN ==== */
 
 int main()
 {
@@ -1439,7 +1586,7 @@ int main()
             break;
         }
 
-        printf("\rmove?> ");
+        //printf("\rmove?> ");
         ch = GETCH();
 
         switch (ch)
